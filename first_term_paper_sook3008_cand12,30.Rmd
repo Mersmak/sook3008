@@ -1,0 +1,1286 @@
+---
+title: "Sucker for Pain: Effects of Price on U.S. Analgesics Demand"
+subtitle: "SOK-3008, Models Of Market Analysis, Fall 2019, Term Paper 1"
+abstract: "This is the first of two obligatory term papers in the course SOK-3008 at the School of Business and Economics at the University of Tromsø. The paper is written in R Markdown as reproducable research on weekly analgesics data from 1991-1996 in the U.S. The purpose of the paper is to determent the effect of price on the demand of Paracetamol (acetaminophen), Ibuprofen, Aspirin and products including the substances combined. The paper uses own-price elasticitys as well as cross-price elasticities to conclude on this matter. The categories combined and ibuprofen are the most elastics and paracetamol and aspirin are the least elastics. They are however all elastic. The cross price elasticities indicates that all the categories are substitutes which makes sence since they all fulfill the same needs; to relieve the consumer from mild to moderest pain. The expenditure elasticities are greater than one for ibuprofen and combined, and less than one of paracetamol and aspirin. Implicating that if the price of paracetamol and aspirin increases the total expenditure on the goods decreases. Ibuprofen and combined will therefore have an opposite effect. The R-code for this project is available at: https://github.com/Mersmak/sook3008.git"
+author: "Candidate nr: 12 & 30"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+
+output: 
+
+ pdf_document:
+    fig_caption: true
+    number_sections: true
+editor_options: 
+
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+suppressMessages(library(Cairo))
+#bibliography: bibliography.bib
+```
+
+
+```{r data_setup}
+### Rotterdam ###
+### Analgesics data ###
+#rm(list=ls())
+ suppressMessages(library(tidyverse))
+ suppressMessages(library(knitr))
+ suppressMessages(library(stats))
+ suppressMessages(library(systemfit))
+ suppressMessages(library(car))
+ suppressMessages(library(extrafont))
+ suppressMessages(library(png))
+ suppressMessages(library(data.table))
+ suppressMessages(library(xtable))
+
+options(digits = 4) # Decimals 
+options(OutDec= ",") # "," in output 
+options(scipen=999)
+
+sysfitToLatex <- function(model1, model2, roundNum=3, stderror=TRUE, ...){
+ 
+  options(scipen=10)
+ 
+  if(!require(data.table)){stop("the package -data.table- is required to run this script")}
+  if(!require(xtable)){stop("the package -xtable- is required to run this script")}
+ 
+  if(stderror){
+    textPut <- "Standard Errors"
+    columSelect <- 2
+  } else {
+    textPut <- "t values"
+    columSelect <- 3
+  }
+ 
+  eqNum <- length(model1$eq)  
+  coeffsTotal <- length(model1$coefficients)
+  coeffsPer <- coeffsTotal/eqNum
+ 
+  eqHolder <- list()
+  orderedEq <- list()
+  k <- 0
+ 
+ 
+  for(i in 1:eqNum){
+    eqHolder[[i]] <- as.data.frame(coefficients(summary(model1))[(1+k):(coeffsPer+k), c(1,columSelect)])
+    eqHolder[[i]]$orderBy <- 1:nrow(eqHolder[[i]])
+    k <- k+coeffsPer
+  }
+  eqHolder[[(eqNum+1)]] <- as.data.frame(coefficients(summary(model2))[(coeffsPer*(eqNum-1)+1):coeffsTotal,
+                                                                       c(1,columSelect)])
+  rownames(eqHolder[[(eqNum+1)]]) <- sub("\\d", (eqNum+1), rownames(eqHolder[[(eqNum+1)]]))
+  eqHolder[[(eqNum+1)]]$orderBy <- 1:nrow(eqHolder[[(eqNum+1)]])
+ 
+ 
+  for(i in 1:(eqNum+1)){
+    orderedEq[[i]] <- as.data.frame(
+      rbindlist(list(eqHolder[[i]][,c(1,3)], eqHolder[[i]][,c(2,3)]))[order(orderBy)])[,1]
+   
+  }
+ 
+  finalFrame <- as.data.frame(matrix(unlist(orderedEq), ncol=(eqNum+1)))
+  finalFrame <-   apply(finalFrame, 2, function(x)
+    ifelse(which(finalFrame==x) %% 2 == 0, paste("(", round(x, roundNum), ")", sep=""), round(x, roundNum))
+  )
+ 
+ 
+ 
+  rSquared <- matrix(0, nrow=2, ncol=(eqNum+1))
+ 
+  for(i in 1:(eqNum)){
+    rSquared[,i] <- (c(summary(model1)$eq[[i]]$r.squared,
+                       summary(model1)$eq[[i]]$adj.r.squared))
+  }
+ 
+  rSquared[,(eqNum+1)] <- (c(summary(model2)$eq[[eqNum]]$r.squared,
+                             summary(model2)$eq[[eqNum]]$adj.r.squared))
+  rSquared <- round(as.data.frame(rSquared), digits=roundNum)
+ 
+  rSquared[3,] <- as.character(as.integer(rep(nobs(model1)/eqNum, eqNum+1)))
+ 
+  rObsName <- c("R-squared", "Adjusted R-squared", "Observations")
+  eqNames <- paste("eq", c(1:(eqNum+1)), sep="")
+  coefNames <- c(rbind(substr(rownames(eqHolder[[1]]), 5,nchar(rownames(eqHolder[[1]]))), rep(" ", coeffsPer)),"", rObsName)
+ 
+  hliner <- c(rep("", eqNum+1))
+ 
+  finalNew <- rbind(finalFrame, rbind(hliner, rSquared))
+ 
+ 
+  returnFrame <- cbind(coefNames, finalNew)
+  colnames(returnFrame)[2:(eqNum+2)] <- eqNames
+ 
+  comm <- paste0("\\hline \n \\multicolumn{",eqNum+2,"}{l}",
+                 "{\\scriptsize{",textPut,"\n in parenthesis}} \n")
+ 
+  print(xtable(returnFrame),
+        add.to.row=list(pos=list(nrow(returnFrame)), command=comm),
+        include.rownames=FALSE,
+        hline.after=c(0,(coeffsPer*2+1)), ...)
+}
+
+# Setting up the data 
+# wana <- data.table::fread("/Users/orjan/Downloads/wana.csv", # change this to were the dataset is located on your computer 
+#                           colClasses=c("integer","numeric","integer","integer","integer","numeric",
+#                                        "character","numeric","integer","character","character"))
+# 
+# wana <- wana %>% dplyr::select(-PRICE_HEX, -PROFIT_HEX)
+# names(wana) <- c("store","upc","week","move","qty","price","sale","profit","ok") # changing names
+# 
+# # The UPC files contain a description of each UPC in a category. 
+# upcana <- data.table::fread("/Users/orjan/Downloads/upcana.csv", # change this to were the dataset is located on your computer 
+#                             colClasses=c("integer","numeric","character","character","integer","numeric"))
+# 
+# names(upcana) <- c("com_code","upc","descrip","size","case","nitem") # changing names 
+# 
+# analgesics <- left_join(wana, upcana, by="upc") # merging the two datasets 
+
+
+# save as a R data file
+# save(analgesics, file = "analgesics.RData")
+# save(upcana, file = "upcana.RData")
+#getwd() this is were the files will be added 
+
+#rm(list=ls())
+# Load the updated analgesics data if its in the same directory as this file 
+load("analgesics.RData")
+load("upcana.RData")
+#str(analgesics)
+#str(upcana)
+# checking for NA's
+#sum(is.na(analgesics))
+#colSums(is.na(analgesics))
+# Zero NA's
+##################<-Data is ready and loaded->##################
+
+#description on data
+#https://www.chicagobooth.edu/-/media/enterprise/centers/kilts/datasets/dominicks-dataset/dominicks-manual-and-codebook_kiltscenter.aspx
+
+
+# most sold analgesics products in the us. 
+analgesics %>% group_by(upc) %>% 
+  summarise(aggmove=sum(move)) %>% 
+  arrange(desc(aggmove)) %>% 
+  mutate(prop=100*aggmove/sum(aggmove)) -> aggitemsUPC
+
+# 641 different products 
+aggitemsUPC <- left_join(aggitemsUPC, upcana, by = "upc")
+
+#the 10 most sold products 
+#aggitemsUPC  %>% dplyr::select(upc,aggmove, prop, descrip, size) %>% arrange(desc(prop)) %>% head(.,10) 
+
+#the ten least sold products
+#aggitemsUPC  %>% dplyr::select(upc,aggmove, prop, descrip, size) %>% arrange(desc(prop)) %>% tail(.,10)
+
+# what about price
+#the most expensive product
+#analgesics  %>% dplyr::select(upc,price,descrip, size) %>% arrange(desc(price)) %>% head(.,1)
+
+# unique(analgesics$descrip)
+# str_detect(analgesics$descrip, "IBUPROFEN")
+
+# for collecting data to work with 
+# anacin = aspirin og caffein 
+# excedrin = aspirin, paracetamol and caffein 
+# tylenol = paracetamol
+# non asp = paracetamol 
+# advil = ibuprofen
+
+# taking a glimse in to the most sold 100 CT products?
+aggitemsUPC  %>% dplyr::select(upc,aggmove, prop, descrip, size) %>% 
+  arrange(desc(prop)) %>% head(.,150) %>% filter(size == "100 CT") -> mostsold 
+
+
+### Creating a show data table ###
+analgesics %>% filter(week %in% c(68:381)) %>%
+  group_by(upc) %>%
+  summarise(aggmove=sum(move)) %>% 
+  arrange(desc(aggmove)) %>% 
+  mutate(prop=100*aggmove/sum(aggmove)) -> showdata 
+
+showdata <- left_join(showdata, upcana, by = "upc")
+
+# taking out the products that does not fit the category
+# Creating new datasets for the 28 best selling 100 CT products that contains 
+# only paracetamol, ibuprofen, aspirin or the substances combined
+showdata  %>% dplyr::select(upc,aggmove, prop, descrip, size) %>% 
+  arrange(desc(prop)) %>% head(.,150) %>%
+  filter(size == "100 CT") %>%
+  filter(upc %in% c("31981000166","3828161001","31284310112","3828161017","30067014568",
+                    "34969290120","31284310239","3828161061","3828161041","30573015040",
+                    "3828161043","30573016040","30009346304","30009348101","31981007674",
+                    "30045044909","30045049960","3828161069","30045046870","3828161053",
+                    "3828161065","3828161013","30045049660","30045012410","30045045270",
+                    "31981000023","31981000893","30573020045")) -> showdata1
+
+showdata1 <- showdata1[,c(1,4,2,3,5)]
+names(showdata1) <- c("Upc","Product","Total sales","Proportion in %", "Size")
+
+# Adding substance category
+paracet <- analgesics %>%
+  filter(week %in% c(68:381)) %>%
+  select(upc) %>%
+  filter(upc %in% c("30045044909","30045049960","3828161069","30045046870",
+                    "3828161053","3828161065","3828161013","30045049660",
+                    "30045012410","30045045270"))
+paracet <- unique(paracet$upc)
+paracet <- cbind(paracet,rep("Paracetamol",10))
+names(paracet) <- c("Upc","Substance")
+
+ibu <- analgesics %>%
+  filter(week %in% c(68:381)) %>%
+  select(upc) %>%
+  filter(upc %in% c("3828161041","30573015040","3828161043","30573016040",
+                    "30009346304","30009348101","31981007674"))
+ibu <- unique(ibu$upc)
+ibu <- cbind(ibu,rep("Ibuprofen",7))
+names(ibu) <- c("Upc","Substance")
+
+
+asp <- analgesics %>%
+  filter(week %in% c(68:381)) %>%
+  select(upc) %>%
+  filter(upc %in% c("3828161001","31284310112","3828161017","30067014568",
+                    "34969290120","31284310239","3828161061"))
+asp <- unique(asp$upc)
+asp <- cbind(asp,rep("Aspirin",7))
+names(asp) <- c("Upc","Substance")
+
+
+com <- analgesics %>%
+  filter(week %in% c(68:381)) %>%
+  select(upc) %>%
+  filter(upc %in% c("31981000166","31981000023","31981000893","30573020045"))
+com <- unique(com$upc)
+com <- cbind(com,rep("Combined",4))
+names(com) <- c("Upc","Substance")
+
+maagaa <- rbind(paracet,ibu,asp,com)
+maagaa <- as.data.frame(maagaa)
+names(maagaa) <- c("Upc","Substance") 
+maagaa$Upc <- as.character(maagaa$Upc)
+maagaa$Upc <- as.double(maagaa$Upc)
+showdata1 <- as.data.frame(showdata1)
+showdata1 <- merge(showdata1, maagaa, by="Upc")
+showdata1$Substance <- as.character(showdata1$Substance)
+showdata1 <- showdata1[,-1]
+showdata1 <- arrange(showdata1, desc(`Proportion in %`))
+rownames(showdata1) <- NULL
+
+
+#sum(showdata1$`Proportion in %`)
+# we are using 23,5 % of the total dataset between 1991-1996 
+
+
+
+# new data sett for each different substance category
+#### clean categories when it comes to substances  #####
+paracetamol <- analgesics %>%
+  select(store, upc, week, move, move, qty, price, sale, profit, ok, com_code, nitem, descrip, size, case) %>%
+  filter(upc %in% c("30045044909","30045049960","3828161069","30045046870",
+                    "3828161053","3828161065","3828161013","30045049660",
+                    "30045012410","30045045270"))
+
+ibuprofen <- analgesics %>%
+  select(store, upc, week, move, move, qty, price, sale, profit, ok, com_code, nitem, descrip, size, case) %>%
+  filter(upc %in% c("3828161041","30573015040","3828161043","30573016040",
+                    "30009346304","30009348101","31981007674"))
+
+aspirin <- analgesics %>%
+  select(store, upc, week, move, move, qty, price, sale, profit, ok, com_code, nitem, descrip, size, case) %>%
+  filter(upc %in% c("3828161001","31284310112","3828161017","30067014568",
+                    "34969290120","31284310239","3828161061"))
+
+combined <- analgesics %>%
+  select(store, upc, week, move, move, qty, price, sale, profit, ok, com_code, nitem, descrip, size, case) %>%
+  filter(upc %in% c("31981000166","31981000023","31981000893","30573020045"))
+
+######
+# cleaning the datasets, fitering, aggregating and grouping by weeks 
+paracetamol1 <- paracetamol %>% filter(move>0) %>% group_by(week) %>% 
+  summarise(q1=sum(move), p1=mean(price, na.rm = TRUE))
+
+ibuprofen1 <- ibuprofen %>% filter(move>0) %>% group_by(week) %>% 
+  summarise(q1=sum(move), p1=mean(price, na.rm = TRUE))
+
+aspirin1 <- aspirin %>% filter(move>0) %>% group_by(week) %>% 
+  summarise(q1=sum(move), p1=mean(price, na.rm = TRUE))
+
+combined1 <- combined %>% filter(move>0) %>% group_by(week) %>% 
+  summarise(q1=sum(move), p1=mean(price, na.rm = TRUE))
+######
+
+# merging the datasets 
+paribu <- merge(paracetamol1, ibuprofen1, by="week")
+aspcom <- merge(aspirin1, combined1, by="week")
+dframe <- merge(paribu, aspcom, by="week")
+
+#colnames(dframe)
+
+# changing colnames for rotterdam model
+names(dframe)[names(dframe) == "q1.x.x"] <- "q1"
+names(dframe)[names(dframe) == "p1.x.x"] <- "p1"
+
+names(dframe)[names(dframe) == "q1.y.x"] <- "q2"
+names(dframe)[names(dframe) == "p1.y.x"] <- "p2"
+
+names(dframe)[names(dframe) == "q1.x.y"] <- "q3"
+names(dframe)[names(dframe) == "p1.x.y"] <- "p3"
+
+
+names(dframe)[names(dframe) == "q1.y.y"] <- "q4"
+names(dframe)[names(dframe) == "p1.y.y"] <- "p4"
+# p1 & q1 = paracetamol 
+# p2 & q2 = ibuprofen 
+# p3 & q3 = aspirin 
+# p4 & q4 = combined 
+
+
+#colnames(dframe)
+#removing the first year of collected data due to possible "child diseases" with the collecting 
+dframe <- dframe[67:381,] # we are looking at 1991 - 1996 = 6 years, should be plenty to make a good model
+
+
+########################################
+# Generate variables FOR ROTTERDAM #
+########################################
+
+# Generating logs on prices
+
+dframe %>% mutate(lnp1=log(p1),
+                  lnp2=log(p2),
+                  lnp3=log(p3),
+                  lnp4=log(p4)) -> dframe
+
+# Generating logs on quantities
+dframe %>% mutate(lnq1=log(q1),
+                  lnq2=log(q2),
+                  lnq3=log(q3),
+                  lnq4=log(q4)) -> dframe
+
+# Note this is the lag fn from dplyr
+# Generating first diff on log prices
+dframe %>% mutate(dlnp1=lnp1-lag(lnp1),
+                  dlnp2=lnp2-lag(lnp2),
+                  dlnp3=lnp3-lag(lnp3),
+                  dlnp4=lnp4-lag(lnp4)) -> dframe
+
+# Generating first diff on log quantities
+dframe %>% mutate(dlnq1=lnq1-lag(lnq1),
+                  dlnq2=lnq2-lag(lnq2),
+                  dlnq3=lnq3-lag(lnq3),
+                  dlnq4=lnq4-lag(lnq4)) -> dframe
+
+# Generate expenditures
+dframe %>% mutate(x1=p1*q1,
+                  x2=p2*q2,
+                  x3=p3*q3,
+                  x4=p4*q4) -> dframe
+
+# Generate total expenditures
+dframe %>% mutate(totexp=x1+x2+x3+x4) -> dframe
+
+# Generate expenditure shares
+dframe %>% mutate(s1=x1/totexp,
+                  s2=x2/totexp,
+                  s3=x3/totexp,
+                  s4=x4/totexp) -> dframe
+
+# Moving average on expenditure shares (n=2)
+dframe %>% mutate(R1=(s1+lag(s1))/2,
+                  R2=(s2+lag(s2))/2,
+                  R3=(s3+lag(s3))/2,
+                  R4=(s4+lag(s4))/2) -> dframe
+
+# Generate dependent variable
+dframe %>% mutate(DR1=R1*dlnq1,
+                  DR2=R2*dlnq2,
+                  DR3=R3*dlnq3,
+                  DR4=R4*dlnq4) -> dframe
+
+# Generate Divisia Volume Index
+dframe %>% mutate(DQ=DR1+DR2+DR3+DR4) -> dframe
+
+# creating dummy variables for special events weeks 
+dframe$SpesWeek <- ifelse(dframe$week %in% c(75,81,89,95,103,112,116,119,120,128,133,141,147,
+                        156,164,168,172,173,180,185,194,199,208,216,220,
+                        224,225,232,238,246,251,260,268,272,276,277,284,
+                        289,298,303,312,320,324,328,329,336,341,350,356,
+                        364,372,377,380,381), 1, 0)
+dframe$SpesWeek <- as.integer(dframe$SpesWeek)
+
+# this is only a character variable for the plots, giving an extra
+# week between christmas and new year each year for visual purposes only
+# not used in the estimations of the model 
+dframe$SpesWeekChar <- ifelse(dframe$week %in% c(75,81,89,95,103,112,116,119,121,128,133,141,147,
+                                                 156,164,168,172,174,180,185,194,199,208,216,220,
+                                                 224,226,232,238,246,251,260,268,272,276,278,284,
+                                                 289,298,303,312,320,324,328,330,336,341,350,356,
+                                                 364,372,377,380,382), "Special event", "")
+
+
+
+
+
+# setting weeks to start with week 1 for 01.january 1991
+dframe$week <- dframe$week-67
+
+#Removing first row containing NA's and last week of 1990
+dframe <- dframe[-1,]
+
+# week number for special events 
+#newspes <- filter(dframe, SpesWeek == 1)
+#newspes$week
+
+
+#######################################
+############### PLOTS #################
+#######################################
+
+####### SALES #######
+dframe$week <- as.factor(dframe$week) # setting as factor so could use gather function 
+plotdframe1 <- dframe[,c(1,2,4,6,8)] # removing the colums we dont need 
+colnames(plotdframe1) <- c("week","Paracetamol","Ibuprofen","Aspirin","Combined") #changing colnames 
+
+# going from wide to long for easier ggplot by category 
+plotdframe1 <- plotdframe1 %>% 
+  gather(variable, value, -week) %>% 
+  mutate(variable = factor(variable, levels=c("Paracetamol","Ibuprofen","Aspirin","Combined"))) %>% 
+  as.data.frame()
+# then changing names for visual purposes 
+colnames(plotdframe1) <- c("Week","Substance","Sales")
+# adding the special event colum to the new dataset 4 times since 4 times longer 
+plotdframe1$spesweek <- rep(dframe$SpesWeekChar,4)
+dframe$week <- as.integer(dframe$week) # putting dframe back to integer 
+
+
+
+
+
+# ggplot on sales for all categorys including special weeks notification 
+salesplot <- ggplot(data=plotdframe1, aes(x=Week, y=Sales, group=Substance, colour = Substance)) + 
+        geom_line() +
+  annotate(geom = "text", x = seq_len(nrow(dframe)), y = 5000, 
+           label = dframe$SpesWeekChar, size = 2.85,angle = 90, family = "LM Roman 10") +
+  coord_cartesian(ylim = c(0, 5500),xlim = c(0,320), expand = FALSE, clip = "off") +
+  theme_bw()+
+  scale_x_discrete(breaks=seq(0,320,10))+
+  theme(axis.text.x = element_text(angle = 90),
+        panel.grid = element_line())+
+  scale_color_brewer(palette = "Dark2")+
+  theme(text=element_text(family="LM Roman 10"))
+
+
+
+# ggplot on loess average sale for all categorys 
+loesssalesplot <- ggplot(data=plotdframe1, aes(x=Week, y=Sales, group=Substance, colour = Substance)) + 
+  geom_smooth(method="loess",span = 0.4) +
+  #annotate(geom = "text", x = seq_len(nrow(dframe)), y = 4000, 
+           #label = dframe$SpesWeekChar, size = 2.85,angle = 90) +
+  #coord_cartesian(ylim = c(0, 4500), expand = FALSE, clip = "off") +
+  theme_bw()+
+  scale_x_discrete(breaks=seq(0,320,10))+
+  theme(axis.text.x = element_text(angle = 90),
+        panel.grid = element_line())+
+  scale_color_brewer(palette = "Dark2")+
+  theme(text=element_text(family="LM Roman 10"))
+
+
+
+
+
+
+####### PRICE #######
+dframe$week <- as.factor(dframe$week) # setting as factor so could use gather function 
+plotdframe2 <- dframe[,c(1,3,5,7,9)] # removing the colums we dont need 
+colnames(plotdframe2) <- c("week","Paracetamol","Ibuprofen","Aspirin","Combined") #changing colnames 
+
+# going from wide to long for easier ggplot by category 
+plotdframe2 <- plotdframe2 %>% 
+  gather(variable, value, -week) %>% 
+  mutate(variable = factor(variable, levels=c("Paracetamol","Ibuprofen","Aspirin","Combined"))) %>% 
+  as.data.frame()
+# then changing names for visual purposes 
+colnames(plotdframe2) <- c("Week","Substance","Price US$")
+# adding the special event colum to the new dataset 4 times since 4 times longer 
+plotdframe2$spesweek <- rep(dframe$SpesWeekChar,4)
+dframe$week <- as.integer(dframe$week) # putting dframe back to integer 
+
+
+
+
+# ggplot on price for all categorys including special weeks notification 
+priceplot <- ggplot(data=plotdframe2, aes(x=Week, y=`Price US$`, group=Substance, colour = Substance)) + 
+  geom_line() +
+  annotate(geom = "text", x = seq_len(nrow(dframe)), y = 9, 
+           label = dframe$SpesWeekChar, size = 2.85,angle = 90,family = "LM Roman 10") +
+  coord_cartesian(ylim = c(2, 9.5), expand = TRUE, clip = "off") +
+  theme_bw()+
+  scale_x_discrete(breaks=seq(0,314,10))+
+  theme(axis.text.x = element_text(angle = 90),
+        panel.grid = element_line())+
+  scale_color_brewer(palette = "Dark2")+
+  theme(text=element_text(family="LM Roman 10"))
+
+
+loesspriceplot <- ggplot(data=plotdframe2, aes(x=Week, y=`Price US$`, group=Substance, colour = Substance)) + 
+  geom_smooth(method="loess", span = 0.4) +
+  #annotate(geom = "text", x = seq_len(nrow(dframe)), y = 4000, 
+  #label = dframe$SpesWeekChar, size = 2.85,angle = 90) +
+  #coord_cartesian(ylim = c(0, 4500), expand = FALSE, clip = "off") +
+  theme_bw()+
+  scale_x_discrete(breaks=seq(0,314,10))+
+  theme(axis.text.x = element_text(angle = 90),
+        panel.grid = element_line())+
+  scale_color_brewer(palette = "Dark2")+
+  theme(text=element_text(family="LM Roman 10"))
+
+
+#################################################
+#################################################
+#################################################
+
+
+###############################################
+# Estimate Rotterdam model using SUR
+###############################################
+
+
+#' storing the means of the budget shares for later because we know we're going to use these 
+#' to calculate elasticities. Name the variables "ms1", "ms2" etc
+ms1 <- mean(dframe$s1)
+ms2 <- mean(dframe$s2)
+ms3 <- mean(dframe$s3)
+ms4 <- mean(dframe$s4)
+#ms1+ms2+ms3+ms4 #this must equal to 1 
+
+### Mean budget shares table ### 
+dframe91 <- dframe[c(1:53),c(31,32,33,34)]
+dframe92 <- dframe[c(54:105),c(31,32,33,34)]
+dframe93 <- dframe[c(106:157),c(31,32,33,34)]
+dframe94 <- dframe[c(158:209),c(31,32,33,34)]
+dframe95 <- dframe[c(210:262),c(31,32,33,34)]
+dframe96 <- dframe[c(263:314),c(31,32,33,34)]
+
+budshare <- matrix(c(mean(dframe91$s1),mean(dframe92$s1),mean(dframe93$s1),mean(dframe94$s1),
+                     mean(dframe95$s1),mean(dframe96$s1),mean(dframe91$s2),mean(dframe92$s2),
+                     mean(dframe93$s2),mean(dframe94$s2),mean(dframe95$s2),mean(dframe96$s2),
+                     mean(dframe91$s3),mean(dframe92$s3),mean(dframe93$s3),mean(dframe94$s3),
+                     mean(dframe95$s3),mean(dframe96$s3),mean(dframe91$s4),mean(dframe92$s4),
+                     mean(dframe93$s4),mean(dframe94$s4),mean(dframe95$s4),mean(dframe96$s4)), 
+                     ncol=4)
+colnames(budshare) <- c('Paracetamol', 'Ibuprofen',"Aspirin","Combined")
+rownames(budshare) <- c(1991:1996)
+budshare <- as.table(budshare)
+budshare <- cbind(budshare, Total = rowSums(budshare))
+SUM <- c(ms1,ms2,ms3,ms4,ms1+ms2+ms3+ms4)
+budshare <- rbind(budshare,SUM)
+rownames(budshare) <- c("1991","1992","1993","1994","1995","1996","1991-1996")
+
+
+###
+
+
+
+# lag ny med  1, 0 for special 
+# gir ikke mening med elastisitet på det 
+#' Definining our demand system in separate equation firsts:
+eq1 <- DR1~dlnp1+dlnp2+dlnp3+dlnp4+DQ+SpesWeek # + special events 
+eq2 <- DR2~dlnp1+dlnp2+dlnp3+dlnp4+DQ+SpesWeek
+eq3 <- DR3~dlnp1+dlnp2+dlnp3+dlnp4+DQ+SpesWeek
+eq4 <- DR4~dlnp1+dlnp2+dlnp3+dlnp4+DQ+SpesWeek
+
+# ds <- cbind(c("DR1~dlnp1+dlnp2+dlnp3+dlnp4+DQ+SpesWeek",
+#               "DR2~dlnp1+dlnp2+dlnp3+dlnp4+DQ+SpesWeek",
+#         "DR3~dlnp1+dlnp2+dlnp3+dlnp4+DQ+SpesWeek","DR4~dlnp1+dlnp2+dlnp3+dlnp4+DQ+SpesWeek"))
+# 
+# colnames(ds) <- "Equations"
+# rownames(ds) <- c("eq1","eq2","eq3","eq4")
+# kable(ds, caption = "Demand System")
+
+
+
+#install.packages("systemfit")
+
+#library(systemfit) #systemfit
+
+#' First we will define the model without homeogeneity and symmetry restriction.
+#' This will be our kind of "benchmark" model
+
+#' Here we define our total system. We omit equation 4 because of singularity
+system123 <- list(eq1, eq2, eq3)
+Rot123 <- systemfit(system123, data=dframe, method="SUR")
+#summary(Rot123) # here we can see the thetas under estimate. These are used to compute the elasticities
+# The p-value shows if it is significant from zero. 
+
+
+####table 
+totalsyst <- summary(Rot123)
+totalsyst <- as.data.frame(totalsyst$coefficients)
+names(totalsyst) <- c("Estimate","Std. Error", "t value", 
+                       "p value")
+#kable(totalsyst, digits = 4, caption = "Estimates Total system")
+####
+
+rs <- cbind(c(0.659,0.706,0.413))
+colnames(rs) <- "Multiple R-Squared"
+rownames(rs) <- c("eq1","eq2","eq3")
+#kable(rs, caption = "R-Squared Total System")
+
+
+
+
+#linearHypothesis
+#' Define our theoretical restrictions
+#' Homogeneity H0: The equations are homogeneous
+reshom <- c("eq1_dlnp1+eq1_dlnp2+eq1_dlnp3+eq1_dlnp4=0",
+            "eq2_dlnp1+eq2_dlnp2+eq2_dlnp3+eq2_dlnp4=0",
+            "eq3_dlnp1+eq3_dlnp2+eq3_dlnp3+eq3_dlnp4=0")
+
+# Symmetry: H0: The equations are symmetric
+ressym <- c("eq1_dlnp2-eq2_dlnp1=0",
+            "eq1_dlnp3-eq3_dlnp1=0",
+            "eq2_dlnp3-eq3_dlnp2=0")
+
+# Homogeneity and symmetry: H0: the equations are homogeneous AND symmetric:
+reshomsym <- c("eq1_dlnp1+eq1_dlnp2+eq1_dlnp3+eq1_dlnp4=0",
+               "eq2_dlnp1+eq2_dlnp2+eq2_dlnp3+eq2_dlnp4=0",
+               "eq3_dlnp1+eq3_dlnp2+eq3_dlnp3+eq3_dlnp4=0",
+               "eq1_dlnp2-eq2_dlnp1=0",
+               "eq1_dlnp3-eq3_dlnp1=0",
+               "eq2_dlnp3-eq3_dlnp2=0")
+
+# Test homogeneity
+#linearHypothesis(Rot123, reshom, test="Chisq")
+#qchisq(0.95,3) #critical chi-squared
+#' Not able to reject Homogeneity since critical > computed
+#qchisq(0.95,3)>chi1[[2,3]] 
+
+# Test symmetry
+#linearHypothesis(Rot123, ressym, test="Chisq")
+#qchisq(0.95, 3) #critical chi-squared
+#' reject Symmetry since critical < computed
+#qchisq(0.95,3)<chi2[[2,3]] 
+
+# Test homogeity and symmetry together
+#linearHypothesis(Rot123, reshomsym, test="Chisq")
+#qchisq(0.95, 6) #critical chi-squared
+# reject just barely 
+#qchisq(0.95,6)<chi3[[2,3]] 
+
+
+### creating wald table ###
+test_results <- c("Keep H0","Reject H0","Reject H0")
+critical_chi <- round(c(qchisq(0.95,3),qchisq(0.95, 3),qchisq(0.95, 6)),2)
+
+chi1 <- linearHypothesis(Rot123, reshom, test="Chisq")
+chi2 <-linearHypothesis(Rot123, ressym, test="Chisq")
+chi3 <-linearHypothesis(Rot123, reshomsym, test="Chisq")
+computed_chi <- round(c(chi1[[2,3]],chi2[[2,3]],chi3[[2,3]]),2)
+restrictions <- c("PH","PS","PH,PS")
+hypotesis <- c("H0: The equations are homogeneous","H0: The equations are symmetric",
+               "H0: The equations are homogeneous and symmetric")
+
+wald <- cbind(hypotesis,restrictions,computed_chi,critical_chi,test_results)
+wald <- as.data.frame(wald)
+names(wald) <- c("Hypotesis","Restrictions", "Computed x^2","Critical x^2", "Test Results")
+
+
+
+
+
+
+
+#' We can now define models with either single or both restrictions imposed:
+# Rotterdam model with homogeneity
+Rot123hom <- systemfit(system123, data=dframe, method="SUR", restrict.matrix=reshom)
+#summary(Rot123hom) # dette er kanskje beste modell for våre data 
+
+# Rotterdam model with symmetry
+Rot123sym <- systemfit(system123, data=dframe, method="SUR", restrict.matrix=ressym)
+#summary(Rot123sym)
+
+
+
+#This is the modell we chose for our data. 
+#Rotterdam model with both homogeneity and symmetry 
+Rot123homsym <- systemfit(system123, data=dframe, method="SUR", restrict.matrix=reshomsym)
+#summary(Rot123homsym)
+
+
+#starting on the SUR table we will present  
+rothomsym <- summary(Rot123homsym)
+rothomsym <- as.data.frame(rothomsym$coefficients)
+names(rothomsym) <- c("Estimate","Std. Error", "t value", 
+                      "p value")
+
+
+
+# setting up r squared table 
+rs1 <- cbind(c(0.657,0.699,0.403))
+colnames(rs1) <- "Multiple R-Squared"
+rownames(rs1) <- c("eq1","eq2","eq3")
+
+
+
+#' We will now estimate our elasticities.
+#' We continue with the fully restricted model.
+
+# Hicks
+e11h <- car::deltaMethod(Rot123homsym, "eq1_dlnp1/ms1") 
+e12h <- car::deltaMethod(Rot123homsym, "eq1_dlnp2/ms1") 
+e13h <- car::deltaMethod(Rot123homsym, "eq1_dlnp3/ms1") 
+e14h <- car::deltaMethod(Rot123homsym, "eq1_dlnp4/ms1") 
+# Marshall
+#car::deltaMethod(Rot123homsym, "eq1_dlnp1/ms1-ms1*eq1_DQ/ms1") 
+e11 <- car::deltaMethod(Rot123homsym, "eq1_dlnp1/ms1-eq1_DQ") # simpler
+e12 <- car::deltaMethod(Rot123homsym, "eq1_dlnp2/ms1-ms2*eq1_DQ/ms1") 
+e13 <- car::deltaMethod(Rot123homsym, "eq1_dlnp3/ms1-ms3*eq1_DQ/ms1") 
+e14 <- car::deltaMethod(Rot123homsym, "eq1_dlnp4/ms1-ms4*eq1_DQ/ms1") 
+
+# Expenditure
+A1 <- car::deltaMethod(Rot123homsym, "eq1_DQ/ms1") 
+
+# Hicks
+e21h <- car::deltaMethod(Rot123homsym, "eq2_dlnp1/ms2") 
+e22h <- car::deltaMethod(Rot123homsym, "eq2_dlnp2/ms2") 
+e23h <- car::deltaMethod(Rot123homsym, "eq2_dlnp3/ms2") 
+e24h <- car::deltaMethod(Rot123homsym, "eq2_dlnp4/ms2") 
+# Marshall
+e21 <- car::deltaMethod(Rot123homsym, "eq2_dlnp1/ms2-ms1*eq2_DQ/ms2") 
+e22 <- car::deltaMethod(Rot123homsym, "eq2_dlnp2/ms2-eq2_DQ") 
+e23 <- car::deltaMethod(Rot123homsym, "eq2_dlnp3/ms2-ms3*eq2_DQ/ms2") 
+e24 <- car::deltaMethod(Rot123homsym, "eq2_dlnp4/ms2-ms4*eq2_DQ/ms2") 
+# Expenditure
+A2 <- car::deltaMethod(Rot123homsym, "eq2_DQ/ms2") 
+
+# Hicks
+e31h <- car::deltaMethod(Rot123homsym, "eq3_dlnp1/ms3") 
+e32h <- car::deltaMethod(Rot123homsym, "eq3_dlnp2/ms3") 
+e33h <- car::deltaMethod(Rot123homsym, "eq3_dlnp3/ms3") 
+e34h <- car::deltaMethod(Rot123homsym, "eq3_dlnp4/ms3") 
+# Marshall
+e31 <- car::deltaMethod(Rot123homsym, "eq3_dlnp1/ms3-ms1*eq3_DQ/ms3") 
+e32 <- car::deltaMethod(Rot123homsym, "eq3_dlnp2/ms3-ms2*eq3_DQ/ms3") 
+e33 <- car::deltaMethod(Rot123homsym, "eq3_dlnp3/ms3-eq3_DQ") 
+e34 <- car::deltaMethod(Rot123homsym, "eq3_dlnp4/ms3-ms4*eq3_DQ/ms3") 
+# Expenditure
+A3 <- car::deltaMethod(Rot123homsym, "eq3_DQ/ms3") 
+
+# Equation 4
+# teta41, recovered from restriction
+#car::deltaMethod(Rot123homsym, "-eq1_dlnp1-eq1_dlnp2-eq1_dlnp3") 
+# teta42, recovered from restriction
+#car::deltaMethod(Rot123homsym, "-eq1_dlnp2-eq2_dlnp2-eq2_dlnp3") 
+# or
+#car::deltaMethod(Rot123homsym, "-eq2_dlnp1-eq2_dlnp2-eq2_dlnp3") 
+# teta43, recovered from restriction
+#car::deltaMethod(Rot123homsym, "-eq1_dlnp3-eq2_dlnp3-eq3_dlnp3") 
+# teta44, recovered from restriction
+#car::deltaMethod(Rot123homsym, "eq1_dlnp1+2*eq1_dlnp2+2*eq1_dlnp3+eq2_dlnp2+2*eq2_dlnp3+eq3_dlnp3") 
+
+# Hicks
+e41h <- car::deltaMethod(Rot123homsym, "(-eq1_dlnp1-eq1_dlnp2-eq1_dlnp3)/ms4") 
+e42h <- car::deltaMethod(Rot123homsym, "(-eq1_dlnp2-eq2_dlnp2-eq2_dlnp3)/ms4") 
+e43h <- car::deltaMethod(Rot123homsym, "(-eq1_dlnp3-eq2_dlnp3-eq3_dlnp3)/ms4") 
+
+#e44h <- car::deltaMethod(Rot123homsym, "(eq1_dlnp1+2*eq1_dlnp2+2*eq1_dlnp3+eq2_dlnp2+2*eq2_dlnp3+eq2_dlnp3)/ms4") 
+e44h <- car::deltaMethod(Rot123homsym, "(eq1_dlnp1+2*eq1_dlnp2+2*eq1_dlnp3+eq2_dlnp2+2*eq2_dlnp3+eq3_dlnp3)/ms4") 
+# Marshall
+e41 <- car::deltaMethod(Rot123homsym, "(-eq1_dlnp1-eq1_dlnp2-eq1_dlnp3)/ms4-ms1*(1-eq1_DQ-eq2_DQ-eq3_DQ)/ms4") 
+e42 <- car::deltaMethod(Rot123homsym, "(-eq1_dlnp2-eq2_dlnp2-eq2_dlnp3)/ms4-ms2*(1-eq1_DQ-eq2_DQ-eq3_DQ)/ms4") 
+e43 <- car::deltaMethod(Rot123homsym, "(-eq1_dlnp3-eq2_dlnp3-eq3_dlnp3)/ms4-ms3*(1-eq1_DQ-eq2_DQ-eq3_DQ)/ms4") 
+e44 <- car::deltaMethod(Rot123homsym, "(eq1_dlnp1+2*eq1_dlnp2+2*eq1_dlnp3+eq2_dlnp2+2*eq2_dlnp3+eq3_dlnp3)/ms4-(1-eq1_DQ-eq2_DQ-eq3_DQ)") 
+# Expenditure
+A4 <- car::deltaMethod(Rot123homsym, "(1-eq1_DQ-eq2_DQ-eq3_DQ)/ms4") 
+
+
+#' Estimate the model with equation 1, 2 and 4 to get parameters for equation 4 
+#' Here we define our total system. We must omit equation 3 because of singularity
+
+# Homogeneity and symmetry: H0: the equations are homogeneous AND symmetric:
+reshomsym124 <- c("eq1_dlnp1+eq1_dlnp2+eq1_dlnp3+eq1_dlnp4=0",
+                  "eq2_dlnp1+eq2_dlnp2+eq2_dlnp3+eq2_dlnp4=0",
+                  "eq3_dlnp1+eq3_dlnp2+eq3_dlnp3+eq3_dlnp4=0",
+                  "eq1_dlnp2-eq2_dlnp1=0",
+                  "eq1_dlnp4-eq3_dlnp1=0",
+                  "eq2_dlnp4-eq3_dlnp2=0")
+
+system124 <- list(eq1, eq2, eq4)
+#Rotterdam model with both homogeneity and symmetry including eq4
+Rot124homsym <- systemfit(system124, data=dframe, method="SUR", restrict.matrix=reshomsym124)
+#summary(Rot124homsym)
+
+# defining the 4th equation
+rothomsym4 <- summary(Rot124homsym)
+rothomsym4 <- as.data.frame(rothomsym4$coefficients)
+names(rothomsym4) <- c("Estimate","Std. Error", "t value", 
+                      "p value")
+
+# selecting the 4th equation 
+rothomsym4 <- rothomsym4[c(15:21),]
+rownames(rothomsym4) <- c("eq4_(Intercept)","eq4_dlnp1","eq4_dlnp2",       
+                          "eq4_dlnp3","eq4_dlnp4","eq4_DQ","eq4_SpesWeek")     
+
+# rbinding all equations together 
+rothomsym <- rbind(rothomsym,rothomsym4)
+
+#kable(rothomsym, digits = 5, caption = "Rotterdam model with both homogeneity and symmetry") # print output
+#sysfitToLatex(Rot123homsym,Rot124homsym)
+#sysfitToLatex(Rot123homsym,Rot124homsym, stderror=FALSE, roundNum = 5)
+
+
+
+
+
+# Hicks
+e41he <- car::deltaMethod(Rot124homsym, "eq3_dlnp1/ms4") 
+e42he <- car::deltaMethod(Rot124homsym, "eq3_dlnp2/ms4") 
+e43he <- car::deltaMethod(Rot124homsym, "eq3_dlnp3/ms4") 
+e44he <- car::deltaMethod(Rot124homsym, "eq3_dlnp4/ms4") 
+# Marshall
+e41e <- car::deltaMethod(Rot124homsym, "eq3_dlnp1/ms4-ms1*eq3_DQ/ms4") 
+e42e <- car::deltaMethod(Rot124homsym, "eq3_dlnp2/ms4-ms2*eq3_DQ/ms4") 
+e43e <- car::deltaMethod(Rot124homsym, "eq3_dlnp3/ms4-ms3*eq3_DQ/ms4") 
+e44e <- car::deltaMethod(Rot124homsym, "eq3_dlnp4/ms4-eq3_DQ") 
+# Expenditure
+A4e <- car::deltaMethod(Rot124homsym, "eq3_DQ/ms4") 
+
+
+
+#e41h$Estimate
+#e41he$Estimate
+#e44$Estimate
+#e44e$Estimate
+#A4$Estimate
+#A4e$Estimate
+
+#########################################
+########## Elasticity Matrix ############
+#########################################
+
+### Hicks ###
+
+elastH <- c(e11h$Estimate,e12h$Estimate,e13h$Estimate,e14h$Estimate,A1$Estimate,
+            e21h$Estimate,e22h$Estimate,e23h$Estimate,e24h$Estimate,A2$Estimate,
+            e31h$Estimate,e32h$Estimate,e33h$Estimate,e34h$Estimate,A3$Estimate,
+            e41h$Estimate,e42h$Estimate,e43h$Estimate,e44h$Estimate,A4$Estimate)
+
+hickselast <- matrix(elastH, ncol=5, byrow = TRUE)
+rownames(hickselast) <- c("Paracetamol","ibuprofen","aspirin","combined")
+colnames(hickselast) <- c("Paracetamol","ibuprofen","aspirin","combined","Expenditure")
+
+hicks <- round(hickselast, 3)
+
+tp1 <- dplyr::bind_rows(e11h,e12h,e13h,e14h,A1) %>% 
+  mutate(t=Estimate/SE, pval=2*pt(-abs(t), df=307)) %>% 
+  select(Estimate,t,pval)
+
+tp2 <- dplyr::bind_rows(e21h,e22h,e23h,e24h,A2) %>% 
+  mutate(t=Estimate/SE, pval=2*pt(-abs(t), df=307)) %>% 
+  select(Estimate,t,pval)
+
+tp3 <- dplyr::bind_rows(e31h,e32h,e33h,e34h,A3) %>% 
+  mutate(t=Estimate/SE, pval=2*pt(-abs(t), df=307)) %>% 
+  select(Estimate,t,pval)
+
+tp4 <- dplyr::bind_rows(e41h,e42h,e43h,e44h,A4) %>% 
+  mutate(t=Estimate/SE, pval=2*pt(-abs(t), df=307)) %>% 
+  select(Estimate,t,pval)
+
+parT <- as.tibble(c(tp1[1,2],tp2[1,2],tp3[1,2],tp4[1,2]))
+ibuT <- as.tibble(c(tp1[2,2],tp2[2,2],tp3[2,2],tp4[2,2]))
+aspT <- as.tibble(c(tp1[3,2],tp2[3,2],tp3[3,2],tp4[3,2]))
+comT <- as.tibble(c(tp1[4,2],tp2[4,2],tp3[4,2],tp4[4,2]))
+expT <- as.tibble(c(tp1[5,2],tp2[5,2],tp3[5,2],tp4[5,2]))
+
+parT <- as.data.frame(parT)
+ibuT <- as.data.frame(ibuT)
+aspT <- as.data.frame(aspT)
+comT <- as.data.frame(comT)
+expT <- as.data.frame(expT)
+
+hicks <- cbind(hicks,parT,ibuT,aspT,comT,expT)
+hicks <- hicks[,c(1,6,2,7,3,8,4,9,5,10)]
+
+parP <- as.tibble(c(tp1[1,3],tp2[1,3],tp3[1,3],tp4[1,3]))
+ibuP <- as.tibble(c(tp1[2,3],tp2[2,3],tp3[2,3],tp4[2,3]))
+aspP <- as.tibble(c(tp1[3,3],tp2[3,3],tp3[3,3],tp4[3,3]))
+comP <- as.tibble(c(tp1[4,3],tp2[4,3],tp3[4,3],tp4[4,3]))
+expP <- as.tibble(c(tp1[5,3],tp2[5,3],tp3[5,3],tp4[5,3]))
+
+parP <- as.data.frame(parP)
+ibuP <- as.data.frame(ibuP)
+aspP <- as.data.frame(aspP)
+comP <- as.data.frame(comP)
+expP <- as.data.frame(expP)
+
+hicks <- cbind(hicks,parP,ibuP,aspP,comP,expP)
+hicks <- hicks[,c(1,2,11,3,4,12,5,6,13,7,8,14,9,10,15)]
+names(hicks) <- c("Paracetamol","t value", "p value", "Ibuprofen","t value", "p value",
+                  "Aspirin","t value", "p value", "Combined","t value", "p value","Expenditure",
+                  "t value", "p value")
+
+
+### marshall ### 
+
+elastM <- c(e11$Estimate,e12$Estimate,e13$Estimate,e14$Estimate,A1$Estimate,
+            e21$Estimate,e22$Estimate,e23$Estimate,e24$Estimate,A2$Estimate,
+            e31$Estimate,e32$Estimate,e33$Estimate,e34$Estimate,A3$Estimate,
+            e41$Estimate,e42$Estimate,e43$Estimate,e44$Estimate,A4$Estimate)
+
+marshallelast <- matrix(elastM, ncol=5, byrow = TRUE)
+rownames(marshallelast) <- c("Paracetamol","Ibuprofen","Aspirin","Combined")
+colnames(marshallelast) <- c("Paracetamol","Ibuprofen","Aspirin","Combined","Expenditure")
+
+marsh <- round(marshallelast, 3)
+
+tp1 <- dplyr::bind_rows(e11,e12,e13,e14,A1) %>% 
+  mutate(t=Estimate/SE, pval=2*pt(-abs(t), df=307)) %>% #skal det være df=307
+  select(Estimate,t,pval)
+
+tp2 <- dplyr::bind_rows(e21,e22,e23,e24,A2) %>% 
+  mutate(t=Estimate/SE, pval=2*pt(-abs(t), df=307)) %>% #skal det være df=307
+  select(Estimate,t,pval)
+
+tp3 <- dplyr::bind_rows(e31,e32,e33,e34,A3) %>% 
+  mutate(t=Estimate/SE, pval=2*pt(-abs(t), df=307)) %>% #skal det være df=307
+  select(Estimate,t,pval)
+
+tp4 <- dplyr::bind_rows(e41,e42,e43,e44,A4) %>% 
+  mutate(t=Estimate/SE, pval=2*pt(-abs(t), df=307)) %>% #skal det være df=307
+  select(Estimate,t,pval)
+
+parT <- as.tibble(c(tp1[1,2],tp2[1,2],tp3[1,2],tp4[1,2]))
+ibuT <- as.tibble(c(tp1[2,2],tp2[2,2],tp3[2,2],tp4[2,2]))
+aspT <- as.tibble(c(tp1[3,2],tp2[3,2],tp3[3,2],tp4[3,2]))
+comT <- as.tibble(c(tp1[4,2],tp2[4,2],tp3[4,2],tp4[4,2]))
+expT <- as.tibble(c(tp1[5,2],tp2[5,2],tp3[5,2],tp4[5,2]))
+
+parT <- as.data.frame(parT)
+ibuT <- as.data.frame(ibuT)
+aspT <- as.data.frame(aspT)
+comT <- as.data.frame(comT)
+expT <- as.data.frame(expT)
+
+marsh <- cbind(marsh,parT,ibuT,aspT,comT,expT)
+marsh <- marsh[,c(1,6,2,7,3,8,4,9,5,10)]
+
+parP <- as.tibble(c(tp1[1,3],tp2[1,3],tp3[1,3],tp4[1,3]))
+ibuP <- as.tibble(c(tp1[2,3],tp2[2,3],tp3[2,3],tp4[2,3]))
+aspP <- as.tibble(c(tp1[3,3],tp2[3,3],tp3[3,3],tp4[3,3]))
+comP <- as.tibble(c(tp1[4,3],tp2[4,3],tp3[4,3],tp4[4,3]))
+expP <- as.tibble(c(tp1[5,3],tp2[5,3],tp3[5,3],tp4[5,3]))
+
+parP <- as.data.frame(parP)
+ibuP <- as.data.frame(ibuP)
+aspP <- as.data.frame(aspP)
+comP <- as.data.frame(comP)
+expP <- as.data.frame(expP)
+
+
+marsh <- cbind(marsh,parP,ibuP,aspP,comP,expP)
+marsh <- marsh[,c(1,2,11,3,4,12,5,6,13,7,8,14,9,10,15)]
+names(marsh) <- c("Paracetamol","t value", "p value", "Ibuprofen","t value", "p value",
+                  "Aspirin","t value", "p value", "Combined","t value", "p value","Expenditure",
+                  "t value", "p value")
+
+# kable(hicks[,1:6], digits = 5, caption = "Estimated Hicksian Price and Expenditure Elasticity")
+# kable(hicks[,7:15], digits = 5, caption = "Estimated Hicksian Price and Expenditure Elasticity")
+# kable(marsh[,1:6], digits = 5, caption = "Estimated Marshallian Price and Expenditure Elasticity")
+# kable(marsh[,7:15], digits = 5, caption = "Estimated Marshallian Price and Expenditure Elasticity")
+
+
+```
+
+
+<!--                                       -->
+<!--                                       -->
+<!--     OPPGAVE BEGYNNER ETTER DETTE      -->
+<!--                                       -->
+<!--                                       -->
+
+
+
+\newpage
+# Introduction 
+
+Analgesics is the professional word for pain killers, and northern America is still the biggest, and one of the fastest growing analgesics markets in the world. From time to time, all of us uses painkillers. This was the main reason we wanted to find out more about the demand for analgesics in this paper.
+
+After discussing the characteristics of the market for a while we found it reasonable to think that a similar commodity market is cigarettes. This is because both commodities basically just have one purpose; relieve pain and release nicotine in the shape of smoke. In the same way a smoker could get his need for nicotine satisfied in form of a great variety of different cigarettes the analgesics buyers are looking to relieve pain and would essentially not care to much about which substances doing just that. This means that price and marketing become very important for the customer choices, and the markets becomes very sensitive for price changes and highly competitive. Unfortunately, we have not included marketing data in this research, but that would be very interesting looking at regarding further research on the topic.  
+
+We were not able to find any articles that analysis the demand of analgesics using the Rotterdam model. However, similar studies on the demand of meat using the Rotterdam model has been a inspiration for writing this paper. In particular "Effects of Health Information and Generic Advertising on U.S. Meat Demand" By Kinnucan, Xiao, Hsia & Jackson (1997) and "Meat Demand in the UK: A Differential Approach" by Fousekis & Revell (2000).
+
+This study focuses on how price changes for analgesics with a specific substance, affects the demand for other analgesics with other substances. More specifically; How will a price change in analgesics with paracetamol change the demand for analgesics with ibuprofen? 
+
+The paper is written in R Markdown as reproducible research on weekly analgesics data from 1991-1996 in the U.S. The purpose of the paper is to determent the effect of price on the demand of Paracetamol (acetaminophen), Ibuprofen, Aspirin and products including the substances combined. The study uses the SUR Rotterdam Model for making the analysis. Both the homogeneity and symmetry restrictions were used in the final estimations. The coefficient estimates and the Hicksian and Marshallian elasticities for the four categories were estimated in this analysis.
+
+The paper uses own-price elasticities as well as cross-price elasticities to conclude on its findings. The categories combined and ibuprofen are the most elastics and paracetamol and aspirin are the least elastics. They are however all elastic. 
+
+The cross-price elasticities indicate that all the categories are substitutes which makes sense since they all fulfill the same needs; to relieve the consumer from mild to severe pain. And just like cigarettes, they come in different strength fulfilling the needs of different customers.  
+
+The expenditure elasticities are greater than one for ibuprofen and combined, and less than one of paracetamol and aspirin. Implicating that if the price of paracetamol and aspirin increases the total expenditure on the goods decreases. Ibuprofen and combined will therefore have an opposite effect. Unfortunately, we notice that the Goodness-of-fit for the model is not optimal. 
+
+We start by presenting the model used in the analysis in section 2. In section 3 the procedure and data are discussed and section 4 will present the result and a discussion. Section 5 concludes the paper and its findings. 
+
+
+# Model
+
+\begin{center}
+\includegraphics[width=17 cm]{equations.pdf}
+\end{center}
+
+```{r}
+#https://pdfresizer.com/crop
+```
+
+
+
+
+\newpage
+
+# Procedure and data
+
+The data for this paper is for academic research purposes only and is collected from the James M. Kilts Center, University of Chicago Booth School of Business. Analgesics data were available from September 1989 to May 1997 and is a result of a partnership between Chicago Booth School and Dominick’s Finer Foods collecting data from more than 3500 different UPC. The analgesics data included 641 different products, and this paper focuses on 28 of them. Dominick’s was a grocery store chain in the Chicago-area that included more than 100 stores in the 90’s. For further research on the topic, please download the Analgesics UPC and Movement files (category files) following this link: https://www.chicagobooth.edu/research/kilts/datasets/dominicks
+
+
+In this paper we have made the decision to only focus on the data between January 1991 to December 1996. This is to prevent the possibility of “child diseases” for the first data that was collected, and establish clear boundaries for the analysis only focusing in on six years. We noticed that there were several potential outliers within the first year of the data from a couple of the different categories the University collected from. By excluding the first year we believe the data is as correct as possibly.
+
+
+Table 1 shows the extracted dataset of analgesics sales from 1991 - 1996 that are used for the estimations in this paper. Notice that this analysis is only for products that was sold in bottles of 100 coated tablets. It’s important for the analysis that the product is the same size for the prices and sales to correspond correctly with each other. Dom Coated Aspirin 100 CT was the most sold analgesic product between 1989 and 1997. 
+
+
+After extracting the data, we then divided it into four different categories of analgesics, based on the main substance the product included: Paracetamol (known as Acetaminophen in the U.S.), Ibuprofen, Aspirin and Combined. The category “Combined” includes all the product that contains at least two major analgesics substances. Excedrin is a product example where one will find paracetamol, aspirin and caffeine combined into one tablet. There were no NA’s in the original data, but we should mention that observations for a couple of weeks are missing over the span of 6 years. The extracted dataset we created stood for 23,5 % of the total analgesics sales between 1991 and 1996 from the original dataset. Figure 2-5 are illustrated using the ggplot2 package in R. All tables are illustrated with the knitr package or hard-coded using LATEX. The dummy variable “special event” was added to see if we were able to prove that in the weeks were most of the population were celebrating, they also bought more analgesics. 
+
+
+## Overview
+
+```{r showdata_table}
+kable(showdata1, digits = 2, caption = "The Extracted Dataset U.S. Analgesics 1991 - 1996")
+```
+
+
+## Utility Tree
+
+\begin{center}
+\includegraphics[width=12cm, height=14cm]{utility.png}
+\end{center}
+\begin{center}
+Figure 1: Utility Tree 
+\end{center}
+
+The “Utility Tree” Figure 1, explains why we chose to examine this category closer. Analgesics is nonprescription drugs that consumers buy to maintain and restore their health. The category is interesting since it is a heavily competitive market with most of the population buying the products from time to time as mentioned. 
+
+\newpage
+
+## Sales 
+
+```{r fig.height=5,fig.width=10 ,dev='cairo_pdf'}
+salesplot + ggtitle("Figure: 2 - Analgesics sales 1991-1996 U.S.")
+```
+
+Figure 2 shows the total analgesics sale in the period and its variations, aggregated for the four different categories. We noticed that the categories tend to follow each other indicating that when the general population are buying more analgesics the sale increases within all the categories. This furtherly indicates that the possibility for substitution effects are quite high for this kind of products. Products containing paracetamol has the highest sale over the period and aspirin which includes the most sold product has a long way to regarding most sales as a category. Just looking at the pikes of the data it was reasonable to assume that some weeks were significantly different from others regarding total sale. This was not the case when we looked at the p values for the special week dummy, which were all close to 1. 
+
+
+Figure 3 gives a clearer picture of how the categories developed over the six years. The total sale of paracetamol is for example very close to the total sale of Ibuprofen by the end of 1996, when in contrast the paracetamol sale was more than double the ibuprofen sale in the beginning of 1991. Looking at how stable the prices has been over the period this might be an effect of health information or advertising, that would be a natural next step to look at going forward after this analysis on price and demand. 
+
+
+
+
+
+```{r fig.height=3,fig.width=8 ,dev='cairo_pdf'}
+loesssalesplot + ggtitle("Figure: 3 - LOESS Analgesics sales 1991-1996 U.S.")
+```
+
+
+\newpage
+
+
+## Price
+
+```{r fig.height=5,fig.width=10 ,dev='cairo_pdf'}
+priceplot + ggtitle("Figure: 4 - Analgesics prices 1991-1996 U.S.")
+```
+
+Figure 4 shows the total variation of price over the period. All four categories have quite little variation and are gradually inclining during the six-year period displayed. This is meaningful regarding economic theory on inflation and steady increasing wages in economic developing countries. 
+
+Figure 5 shows that the price difference of the four categories are seemingly even in the period. The Combined category is not surprisingly the most expensive category, where aspirin is the cheapest.
+
+
+```{r fig.height=3,fig.width=8 ,dev='cairo_pdf'}
+loesspriceplot + ggtitle("Figure: 5 - LOESS Analgesics Price 1991-1996 U.S.") 
+```
+
+\newpage
+
+
+## Mean budget shares
+
+Average market shares for the four categories is listed in "Table 2". As already mentioned, paracetamol has the highest market share, followed by ibuprofen, aspirin and lastly combined. We noticed that paracetamol has decreased its market share by 10 % percent from 1991 to 1996, while ibuprofen has increased its market share percentage by 12 % over the same years. This is interesting since we already have seen that the prices have increased very steady and similar within all the categories. A possible explanation to this could be marketing and health information factors effecting the demand of the different products within the categories. We have included the budget shares values in the paper since it is a crucial part of estimating the Rotterdam model correctly as shown in the model part of the paper.  
+
+```{r}
+kable(budshare, digits = 2, caption = "Mean budget shares pr year")
+```
+
+
+## Wald test 
+
+When starting the estimation process, we first estimated the model without theoretical restrictions and then tested it for homogeneity and symmetry. The results of this tested is presented in "Table 3". We failed to reject the test with homogeneity. We then estimated the model with both homogeneity and symmetry. From the results we find that the model with both restrictions present has coefficients with higher significance values than the other, and we therefor chose this model for the rest of the analysis. Even when H0 was rejected because computed $x^2$ was marginally higher than critical $x^2$. When estimating the model, we have to exclude one equation from the model system to prevent singularity in the covariance matrix. We therefore dropped the combined category for the main Rotterdam model. To estimate the combine category, we excluded the aspirin category for the new system the model was applied for.     
+
+```{r}
+kable(wald, caption = "Wald Test of Theoretical Restrictions")
+
+```
+
+The model used are estimated with seemingly unrelated regression (SUR) to test the restrictions of symmetry and homogeneity. In general, we keep the restriction when the critical chi-squared are higher than the computed chi-squared, as we can see in "Table 3" we therefore should only keep homogeneity according to economic theory. Whereas symmetry and the fully restricted model where both homogeneity and symmetry are used have to be rejected. However, we still chose to use the fully restricted model when the critical chi-squared (12,59) is particularly close to the computed chi-squared (12,69).  
+
+\newpage
+
+
+# Results and discussion 
+
+## SUR model Rotterdam 
+In "Table 4" we find the results from the demand system we now have estimated. From the adjusted R-squared values of the categories, we find that the Goodness-of-fit (measured by adjusted R-square) where 0,65 for paracetamol, 0,69 for ibuprofen, 0,39 for aspirin and 0,65 for combined. The R-square values tells us how much of the observed variation is explained by the inputs of the models. This implicates that in further analysis it would be logic to try for example and AIDS model to see if the model could explain the variance of the data better. The own-price coefficients are however negative and significant on a 5 % level for all categories which is results we were expecting. Expenditure coefficients are all positive and also significant on a 5 % significance level. None of the intercepts or special weeks are significantly different from zero for any of the categories. we were expecting to see that more analgesics product was bought in the weeks where national holidays and events were celebrated, but according to the model these weeks are not statistical significantly different from the normal weeks. All the cross-price effects are significant on a 5 % level. This indicates that if the price of for example paracetamol increases, the sale of ibuprofen, aspirin and combined will increase. This was the results we expected to see for a very competitive market such as analgesics. 
+
+\begin{center}
+Table 4: SUR Estimates of the Rotterdam Model with Homogeneity and Symmetry
+\end{center}
+
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lllll}
+ Independent Variables & QPARACETAMOL & QIBUPROFEN & QASPIRIN & QCOMBINED \\ 
+  \hline
+(Intercept) & -0,00028 & -0,00015 & 0,00049 & -0,00006 \\ 
+    & (-0,08831) & (-0,04764) & (0,20781) & (-0,02606) \\ 
+  PPARACETAMOL & -1,257* & 0,54618* & 0,33665* & 0,37329* \\ 
+    & (-16,63151) & (10,11505) & (6,34115) & (8,50891) \\ 
+  PIBUPROFEN & 0,54618* & -1,17621* & 0,30132* & 0,32861* \\ 
+    & (10,11505) & (-17,93335) & (6,64193) & (8,30231) \\ 
+  PASPIRIN & 0,33665* & 0,30132* & -0,83868* & 0,20261* \\ 
+    & (6,34115) & (6,64193) & (-12,49941) & (5,07864) \\ 
+  PCOMBINED & 0,37417* & 0,3287* & 0,20071* & -0,90452* \\ 
+    & (8,52468) & (8,26915) & (5,09973) & (-19,69929) \\ 
+  EXPENDITURE & 0,33875* & 0,31408* & 0,16578* & 0,18127* \\ 
+    & (17,75437) & (15,95608) & (11,09221) & (12,35821) \\ 
+  SPECIALWEEKS & -0,00129 & 0,0007 & -0,00059 & 0,00118 \\ 
+    & (-0,16571) & (0,08803) & (-0,09988) & (0,19645) \\ 
+   &  &  &  &  \\ 
+   \hline
+R-squared & 0,65666 & 0,69922 & 0,4035 & 0,65725 \\ 
+  Adjusted R-squared & 0,65108 & 0,69434 & 0,39381 & 0,65168 \\ 
+  Observations & 314 & 314 & 314 & 314 \\ 
+   \hline 
+ \multicolumn{5}{l}{\scriptsize{t values
+ in parenthesis. * indicates the coefficient is significant at the 5 \% level or lower.}} 
+\end{tabular}
+\end{table}
+
+
+\newpage
+
+
+## Elasticities
+
+In this paper both Hicksian and Marshallian elasticities have been estimated. The difference between them are that in Hickian both the prices of the other goods and our level of utility remains constant, in other words the Hicksian accounts for substitution effects. Marshallian focusses on both the substitution effect and the income effect. Because of this the cross-price elasticity will be higher in a Hicksian than in Marshallian, and the own price elasticity will have a higher elasticity in Marshallian than in Hicksian. According to our findings all of the elasticities are significant at a .05 significance level, both in the Hickian and Marshallian Matrix (Tabel 5 and 6). When the elasticity is greater than one, the demand is elastic. The demand will have a high responsiveness to changes in price. However, the demand will have a low responsiveness when the elasticity is under one, the demand is inelastic.
+ 
+ 
+The own-price elasticity tells us how sensitive a product is to change in their own prices. You can see that the elasticities are over -3 (elastic) in both of our tables (5 and 6) which implies that the commodities are price sensitive. If the price goes up whit 1% the consumers will change to another good, and the demand will go down. Table 5 shows us that the own price elasticities for Hickian are -3.340, - 4,465, -4,040 and -5,917 for paracetamol, ibuprofen, aspirin and Combined, respectively. According to this Combined are the commodity that is most sensitive to a price change in changes in their own prices. This consist with the fact that combined have the highest price (Figure 5) and the lowest demand (Figure 3) of all of the commodities.
+ 
+ 
+The cross-price elasticity shows us how sensitive the demand for one good is to change in the price of another. When $Eji$  and $Eji$ are higher than zero i and j are substitutes, when $Eji$  and $Eji$  are smaller than zero i and j are complements and when $Eji$  and $Eji$  are equal to zero i and j are independent goods. From the tables on elasticities all the cross-price elasticities are higher than zero, as a result all of the commodities are substitutes. This corresponds both with our earlier assumptions and Kayne´s (2004) that says that analgesics have several close substitutes. Table 5 shows us that when the price change for paracetamol ibuprofen have an elasticity that is 1,451 and when ibuprofen price changes the paracetamol elasticity is 2,074. In the same way a price change in ibuprofen gives 1,248 in elasticity for combined and a change in combined prices gives an elasticity of 2,153. These results say that these commodities (Paracetamol and Ibuprofen, ibuprofen and combined) are closer substitutes than the rest of the substitutes. The cross-price elasticities are all over 1, indicating that all of them are elastic. 
+ 
+From theory there are three assumptions that tells when the own-price elasticity will be high or low. The first assumption is that when there are many substitutes the demand will be price sensitive (high elasticity), on the other hand the elasticity will be low when its few substitutes. Secondly the elasticity will be high or low if the price of the commodity is a high or low proportion of the income. Lastly how much time since the prince change tells if the elasticity is high or low. (Kayn, 2004) According to our data and results we see that two of this assumptions tells us that the elasticity should be high, we have many substitutes and the price is almost constant. However the last assumption tells us that the elasticity should be low, because we can think that the purchase of analgesic just is a small proportion of the income. We are missing the income proportion in our analysis and therefore you can think that the elasticities should be lower. 
+ 
+
+
+\begin{center}
+Table 5: Estimated Hicksian Price and Expenditure Elasticity for U.S. Analgesics, Rotterdam Model SUR homogenity and symmetry  
+\end{center}
+
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lllll}
+ With Respect to: & Paracetamol & Ibuprofen & Aspirin & Combined \\ 
+  \hline
+Paracetamol Price & -3,340* & 1,451* & 0,895* & 0,994* \\ 
+    & (-16,632) & (10,115) & (6,341) & (8,525) \\ 
+  Ibuprofen Price & 2,074* & -4,465* & 1,144* & 1,248* \\ 
+    & (10,115) & (-17,933) & (6,642) & (8,269) \\ 
+  Aspirin Price & 1,622* & 1,451* & -4,040* & 0,967* \\ 
+    & (6,341) & (6,642) & (-12,499) & (5,100) \\ 
+  Combined Price & 2,450* & 2,153* & 1,314* & -5,917* \\ 
+    & (8,525) & (8,269) & (5,100) & (-19,624) \\ 
+  Analgesics Expenditure & 0,900* & 1,192* & 0,799* & 1,188* \\ 
+    & (17,75) & (15,96) & (11,09) & (12,32) \\ 
+   &  &  &  &  \\ 
+   \hline
+ \multicolumn{5}{l}{\scriptsize{t values
+ in parenthesis. * indicates the coefficient is significant at the 5 \% level or lower.}} 
+\end{tabular}
+\end{table}
+
+
+
+
+\begin{center}
+Table 6: Estimated Marshallian Price and Expenditure Elasticity for U.S. Analgesics, Rotterdam Model SUR homogenity and symmetry 
+\end{center}
+
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lllll}
+ With Respect to: & Paracetamol & Ibuprofen & Aspirin & Combined \\ 
+  \hline
+Paracetamol Price & -3,679* & 1,214* & 0,708* & 0,857* \\ 
+    & (-18,227) & (8,549) & (4,937) & (7,347) \\ 
+  Ibuprofen Price & 1,625* & -4,779* & 0,896* & 1,066* \\ 
+    & (7,781) & (-19,447) & (5,093) & (7,036) \\ 
+  Aspirin Price & 1,321* & 1,241* & -4,206* & 0,845* \\ 
+    & (5,198) & (5,786) & (-12,806) & (4,480) \\ 
+  Combined Price & 2,003* & 1,840* & 1,068* & -6,099* \\ 
+    & (6,903) & (7,139) & (4,069) & (-20,250) \\ 
+  Analgesics Expenditure & 0,900* & 1,192* & 0,799* & 1,188* \\ 
+    & (17,75) & (15,96) & (11,09) & (12,32) \\ 
+   &  &  &  &  \\ 
+   \hline
+ \multicolumn{5}{l}{\scriptsize{t values
+ in parenthesis. * indicates the coefficient is significant at the 5 \% level or lower.}} 
+\end{tabular}
+\end{table}
+
+
+
+\newpage
+
+# Concluding comments 
+
+The expenditure elasticity explains how expenditure on a good reacts to a price change. It also tells us that a product is a luxury good if the elasticity is over one, an inferior good if the elasticity is under zero and a normal good if the elasticity is in between zero and one. According to our results ibuprofen (1,192) and combined (1,188) are luxury goods, and paracetamol (0,9) and aspirin (0,799) are normal goods.These results are consistent with the observed prices in figure 5, where the prices for ibuprofen and combined are higher than the prices for aspirin and paracetamol. In the model the highest price has been 8,4 dollars (combined) and the lowest have been 3,5 dollars (Aspirin), therefore the maximum difference in price can be 4,9 dollars. However, the variance in price will not be that high, you can see in the figure that the lowest price is registered in 1991 and the highest in 1996. The price difference is high in terms of present, but in terms of “real” money the difference is probably not that noticeable. As a result of this claim it’s a high probability that all off the commodities are normal goods, something that also is consistent with this theory are the results that tells that the commodities are substitutes. 
+
+\newpage
+
+
+# References
+
+Barten (1964) and Theil (1965) proposed the Rotterdam model, and if you see historically on demand systems this model is seen as a turning point. The model’s simplicity, transparency and evident generality have caused to its influential place in demand analysis. (Clements & Gao, 2015) 
+
+References: 
+Barten, A.P. (1964). Consumer Demand Functions under Conditions of Almost Additive Preferences. Econometrica, 32(1/2), pp. 1-38. https://www.jstor.org/stable/1913731
+
+Theil, H. (1965). The Information Approach to Demand Analysis. Econometrica, 30(1), pp. 67-86. https://www.jstor.org/stable/1911889
+
+Clements, K. W& Gao, G.(2015), The Rotterdam demand model half a century on, Economic Modelling, 49, pp. 91-103. https://doi.org/10.1016/j.econmod.2015.03.019
+ 
+Kayne, S. B. (2004). Pharmacy business Management
+ 
+Kinnucan, H. W., Hui, X., Hsia, C. & Jackson, J. D. (1997), Effects of Helath Information and Genereic Advertising on U.S Meat Demand. American Economics Association, 79, pp. 13-23 
+
+
+
+
